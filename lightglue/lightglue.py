@@ -21,6 +21,10 @@ else:
 torch.backends.cudnn.deterministic = True
 
 
+def strip_prefix(state_dict, prefix):
+    return {k[len(prefix):] if k.startswith(prefix) else k: v for k, v in state_dict.items()}
+
+
 @torch.cuda.amp.custom_fwd(cast_inputs=torch.float32)
 def normalize_keypoints(
     kpts: torch.Tensor, size: Optional[torch.Tensor] = None
@@ -366,7 +370,7 @@ class LightGlue(nn.Module):
         },
     }
 
-    def __init__(self, features="superpoint", **conf) -> None:
+    def __init__(self, features="superpoint", checkpoint=None, **conf) -> None:
         super().__init__()
         self.conf = conf = SimpleNamespace(**{**self.default_conf, **conf})
         if features is not None:
@@ -407,11 +411,18 @@ class LightGlue(nn.Module):
 
         state_dict = None
         if features is not None:
-            fname = f"{conf.weights}_{self.version.replace('.', '-')}.pth"
-            state_dict = torch.hub.load_state_dict_from_url(
-                self.url.format(self.version, features), file_name=fname
-            )
-            self.load_state_dict(state_dict, strict=False)
+            if not checkpoint:
+                fname = f"{conf.weights}_{self.version.replace('.', '-')}.pth"
+                state_dict = torch.hub.load_state_dict_from_url(
+                    self.url.format(self.version, features), file_name=fname
+                )
+                self.load_state_dict(state_dict, strict=False)
+            else:
+                checkpoint = torch.load(str(checkpoint))
+                prefixed_state_dict = checkpoint['model']
+                state_dict = strip_prefix(prefixed_state_dict, 'matcher.')
+                self.load_state_dict(state_dict, strict=False)
+
         elif conf.weights is not None:
             path = Path(__file__).parent
             path = path / "weights/{}.pth".format(self.conf.weights)
