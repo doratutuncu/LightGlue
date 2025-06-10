@@ -45,6 +45,10 @@ from torchvision.models import resnet
 from .utils import Extractor
 
 
+def strip_prefix(state_dict, prefix):
+    return {k[len(prefix):] if k.startswith(prefix) else k: v for k, v in state_dict.items()}
+
+
 def get_patches(
     tensor: torch.Tensor, required_corners: torch.Tensor, ps: int
 ) -> torch.Tensor:
@@ -258,7 +262,7 @@ class DKD(nn.Module):
                 scoredispersitys.append(kptscore)  # for jit.script compatability
                 kptscores.append(kptscore)
 
-        return keypoints, kptscores, scoredispersitys
+        return keypoints, scoredispersitys, kptscores
 
 
 class InputPadder(object):
@@ -634,7 +638,7 @@ class ALIKED(Extractor):
 
     required_data_keys = ["image"]
 
-    def __init__(self, **conf):
+    def __init__(self, checkpoint=None, **conf):
         super().__init__(**conf)  # Update with default configuration.
         conf = self.conf
         c1, c2, c3, c4, dim, K, M = self.cfgs[conf.model_name]
@@ -687,10 +691,17 @@ class ALIKED(Extractor):
             else self.n_limit_max,
         )
 
-        state_dict = torch.hub.load_state_dict_from_url(
-            self.checkpoint_url.format(conf.model_name), map_location="cpu"
-        )
-        self.load_state_dict(state_dict, strict=True)
+        if not checkpoint:
+            state_dict = torch.hub.load_state_dict_from_url(
+                self.checkpoint_url.format(conf.model_name), map_location="cpu"
+            )
+            self.load_state_dict(state_dict, strict=True)
+        else:
+            checkpoint = torch.load(str(checkpoint))
+            prefixed_state_dict = checkpoint['model']
+            state_dict = strip_prefix(prefixed_state_dict, 'extractor.')
+            self.load_state_dict(state_dict, strict=False)
+
 
     def get_resblock(self, c_in, c_out, conv_type, mask):
         return ResBlock(
